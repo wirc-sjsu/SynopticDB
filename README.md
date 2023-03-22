@@ -8,7 +8,7 @@ The goal of this project is to collect data from the Synoptic Mesonet API (Forme
 
 Python 3 and package modules
 * pandas
-* synopticPy
+* [synopticPy](https://synopticpy.readthedocs.io/en/latest/user_guide/install.html#option-1-recommended-conda-environment)
 
 ## Authors
 
