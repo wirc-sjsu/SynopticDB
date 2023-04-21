@@ -180,7 +180,7 @@ class synopticDB(object):
     # @ Param state - states the user wants data from
     # @ Param vars - list of variables to query (potential vars = 'air_temp','relative_humidity',"solar_radiation","precip_accum","fuel_moisture",'wind_speed')
     #
-    def get_synData(self,startTime=None,endTime=None,bbox=None,state=["CA"],allVars=False,vars =['air_temp','relative_humidity']):
+    def get_synData(self,startTime=None,endTime=None,network=None,bbox=None,state=None,allVars=False,vars =['air_temp','relative_humidity']):
         if allVars == False:
             operator = "OR"
         else:
@@ -192,42 +192,26 @@ class synopticDB(object):
             startTime = endTime - timedelta(days=1)
         tmpTime = startTime + dt.timedelta(days=1)
         while tmpTime <= endTime:
-            logging.info('getting data between {} and {}'.format(startTime,tmpTime))
+            logging.info('getting data from synoptic between {} and {}'.format(startTime,tmpTime))
             startUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(startTime.year,startTime.month,startTime.day,startTime.hour,0)
             endUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(tmpTime.year,tmpTime.month,tmpTime.day,tmpTime.hour,0)
             startTime = startTime + dt.timedelta(days=1)
             tmpTime = tmpTime + dt.timedelta(days=1)
-            if bbox != None:
-                try:
-                    df = stations_timeseries(
-                        start=startUtc, 
-                        end=endUtc,
-                        network=2,
-                        varsoperator=operator,
-                        country="US",
-                        state=state,
-                        bbox=bbox,
-                        vars=vars,
-                        verbose=False
-                        )
-                except Exception as e:
-                    logging.warning('get_synData with exception {}'.format(e))
-                    continue
-            else:
-                try:
-                    df = stations_timeseries(
-                        start=startUtc, 
-                        end=endUtc,
-                        network=2,
-                        varsoperator=operator,
-                        country="US",
-                        state=state,
-                        vars=vars,
-                        verbose=False
-                        )
-                except Exception as e:
-                    logging.warning('get_synData with exception {}'.format(e))
-                    continue
+            try:
+                df = stations_timeseries(
+                    start=startUtc, 
+                    end=endUtc,
+                    network=network,
+                    varsoperator=operator,
+                    country="US",
+                    state=state,
+                    bbox=bbox,
+                    vars=vars,
+                    verbose=False
+                )
+            except Exception as e:
+                logging.warning('get_synData with exception {}'.format(e))
+                continue
             # Insert the queired data to the dataabse
             self.insert_data(df)
 
@@ -318,7 +302,7 @@ if __name__ == '__main__':
     # Any lines with double hashtags (##) indicate possible usages for the database if the hashtags are removed
     dbName = "mesoDB"
     synDb = synopticDB()
-    tempDf = synDb.get_synData(dt.datetime(2000,1,1,0),dt.datetime(2010,1,1,0),
+    tempDf = synDb.get_synData(dt.datetime(2000,1,1,0),dt.datetime(2023,1,1,0),network=2,state=None,
                                vars=['air_temp','relative_humidity',"solar_radiation","precip_accum","fuel_moisture",'wind_speed']) # Without bbox
 
     # Check the size of a table within the database
