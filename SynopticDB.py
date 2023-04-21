@@ -187,14 +187,14 @@ class synopticDB(object):
         # Check startTime and endTime parameters
         if startTime is None or endTime is None:
             endTime = dt.datetime.now().replace(minute=0, second=0, microsecond=0)
-            startTime = endTime - timedelta(hours=1)
-        tmpTime = startTime + dt.timedelta(hours=1)
+            startTime = endTime - timedelta(days=1)
+        tmpTime = startTime + dt.timedelta(days=1)
         while tmpTime <= endTime:
             logging.info('getting data between {} and {}'.format(startTime,tmpTime))
             startUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(startTime.year,startTime.month,startTime.day,startTime.hour,0)
             endUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(tmpTime.year,tmpTime.month,tmpTime.day,tmpTime.hour,0)
-            startTime = startTime + dt.timedelta(hours=1)
-            tmpTime = tmpTime + dt.timedelta(hours=1)
+            startTime = startTime + dt.timedelta(days=1)
+            tmpTime = tmpTime + dt.timedelta(days=1)
             if bbox != None:
                 try:
                     df = stations_timeseries(
