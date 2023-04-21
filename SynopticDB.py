@@ -147,6 +147,8 @@ class synopticDB(object):
         c = conn.cursor()
         # Get a list of all the current tables in the database
         # Insert station data to Stations table and observation data to corresponding database tables
+        if not isinstance(observationDf, list):
+            observationDf = [observationDf]
         for site in observationDf:
             values = [site.attrs["STID"], site.attrs['longitude'], site.attrs['latitude'], site.attrs['ELEVATION'], site.attrs['STATE']]
             c.execute("INSERT OR IGNORE INTO Stations (STID, longitude, latitude, elevation, state) VALUES (?, ?, ?, ?, ?)", values)
@@ -202,8 +204,6 @@ class synopticDB(object):
                         end=endUtc,
                         network=2,
                         varsoperator=operator,
-                        status="ACTIVE",
-                        sensorvars=1,
                         country="US",
                         state=state,
                         bbox=bbox,
@@ -220,8 +220,6 @@ class synopticDB(object):
                         end=endUtc,
                         network=2,
                         varsoperator=operator,
-                        status="ACTIVE",
-                        sensorvars=1,
                         country="US",
                         state=state,
                         vars=vars,
