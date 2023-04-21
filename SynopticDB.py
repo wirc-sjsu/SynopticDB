@@ -191,6 +191,7 @@ class synopticDB(object):
             startTime = endTime - timedelta(hours=1)
         tmpTime = startTime + dt.timedelta(hours=1)
         while tmpTime <= endTime:
+            print('Getting data between {} and {}'.format(startTime,tmpTime))
             startUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(startTime.year,startTime.month,startTime.day,startTime.hour,0)
             endUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(tmpTime.year,tmpTime.month,tmpTime.day,tmpTime.hour,0)
             startTime = startTime + dt.timedelta(hours=1)
