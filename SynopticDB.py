@@ -1,16 +1,15 @@
 # Import Necessary Libraries
 import datetime as dt
 from datetime import timedelta
-import numpy as np
 import os.path as osp
 import os
 import pandas as pd
 import sqlite3
-import synoptic.services as ss
 from synoptic.services import stations_timeseries
-from typing import List
+import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-class FMRError(Exception):
+class synopticError(Exception):
     pass
 
 class synopticDB(object):
@@ -64,12 +63,12 @@ class synopticDB(object):
                 if c.fetchone() is not None:
                     availTables.append(table)
             if len(availTables) == 0:
-                print("No table names provided. Pick from avaiable tables below:")
-                print(self.get_table_names())
+                logging.warning("No table names provided. Pick from avaiable tables below:")
+                logging.warning(self.get_table_names())
                 return
         else:
-            print("No table names provided. Pick from avaiable tables below:")
-            print(self.get_table_names())
+            logging.warning("No table names provided. Pick from avaiable tables below:")
+            logging.warning(self.get_table_names())
             return
     
         # Check if stationIDs parameter is provided
@@ -80,7 +79,7 @@ class synopticDB(object):
                 if c.fetchone() is not None:
                     stids.append(stid)
             if len(stids) == 0:
-                print("None of the STIDs provided are in the database")
+                logging.warning("None of the STIDs provided are in the database")
                 return
         elif bbox != None:
             # If bbox parameter is provided but stationIDs is None, use bbox to find STIDs in Stations table
@@ -88,7 +87,7 @@ class synopticDB(object):
             c.execute(bboxQuery)
             stids = [row[0] for row in c.fetchall()]
             if len(stids) == 0:
-                print("No STIDs in the database lie within the bbox coordinates")
+                logging.warning("No STIDs in the database lie within the bbox coordinates")
                 return
         elif state != None:
             # Check state parameter
@@ -99,7 +98,7 @@ class synopticDB(object):
                 if result is not None:
                     stids.extend([x[0] for x in result])
             if not stids:
-                print("No STIDs in the database match the provided state(s).")
+                logging.warning("No STIDs in the database match the provided state(s).")
                 return
     
         else:
@@ -132,7 +131,7 @@ class synopticDB(object):
             result = pd.concat(dfs, axis=0)
             return result
         else:
-            print("No data found in time range")
+            logging.warning("No data found in time range")
             return
 
 
@@ -191,38 +190,46 @@ class synopticDB(object):
             startTime = endTime - timedelta(hours=1)
         tmpTime = startTime + dt.timedelta(hours=1)
         while tmpTime <= endTime:
-            print('Getting data between {} and {}'.format(startTime,tmpTime))
+            logging.info('getting data between {} and {}'.format(startTime,tmpTime))
             startUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(startTime.year,startTime.month,startTime.day,startTime.hour,0)
             endUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(tmpTime.year,tmpTime.month,tmpTime.day,tmpTime.hour,0)
             startTime = startTime + dt.timedelta(hours=1)
             tmpTime = tmpTime + dt.timedelta(hours=1)
             if bbox != None:
-                df = stations_timeseries(
-                    start=startUtc, 
-                    end=endUtc,
-                    network=2,
-                    varsoperator=operator,
-                    status="ACTIVE",
-                    sensorvars=1,
-                    country="US",
-                    state=state,
-                    bbox=bbox,
-                    vars=vars,
-                    verbose=False
-                    )
+                try:
+                    df = stations_timeseries(
+                        start=startUtc, 
+                        end=endUtc,
+                        network=2,
+                        varsoperator=operator,
+                        status="ACTIVE",
+                        sensorvars=1,
+                        country="US",
+                        state=state,
+                        bbox=bbox,
+                        vars=vars,
+                        verbose=False
+                        )
+                except Exception as e:
+                    logging.warning('get_synData with exception {}'.format(e))
+                    continue
             else:
-                df = stations_timeseries(
-                    start=startUtc, 
-                    end=endUtc,
-                    network=2,
-                    varsoperator=operator,
-                    status="ACTIVE",
-                    sensorvars=1,
-                    country="US",
-                    state=state,
-                    vars=vars,
-                    verbose=False
-                    )
+                try:
+                    df = stations_timeseries(
+                        start=startUtc, 
+                        end=endUtc,
+                        network=2,
+                        varsoperator=operator,
+                        status="ACTIVE",
+                        sensorvars=1,
+                        country="US",
+                        state=state,
+                        vars=vars,
+                        verbose=False
+                        )
+                except Exception as e:
+                    logging.warning('get_synData with exception {}'.format(e))
+                    continue
             # Insert the queired data to the dataabse
             self.insert_data(df)
 
@@ -264,9 +271,9 @@ class synopticDB(object):
         result = c.fetchone()
         # Check if there are any rows in the table
         if result[0] > 0:
-            print(f"There are {result[0]} rows in the {tableName} table.")
+            logging.info(f"There are {result[0]} rows in the {tableName} table.")
         else:
-            print(f"There are no rows in the {tableName} table.")
+            logging.warning(f"There are no rows in the {tableName} table.")
         # Close the database connection
         conn.close()
     
