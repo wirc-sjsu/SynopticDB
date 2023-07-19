@@ -5,9 +5,8 @@ import os.path as osp
 import os
 import pandas as pd
 import sqlite3
-from synoptic.services import stations_timeseries
+import synoptic.services as ss
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class synopticError(Exception):
     pass
@@ -20,9 +19,10 @@ class synopticDB(object):
     #
     def __init__(self, folderPath=osp.join(osp.abspath(os.getcwd()),"synDB.db")):
         self.dbPath = osp.join(folderPath)
+        self.available_vars = self.get_available_vars()
+        dbTableNames = self.get_table_names()
         # Open connection to sqlite database
         conn = sqlite3.connect(self.dbPath)
-        dbTableNames = self.get_table_names()
         if not "Stations" in dbTableNames:
             # Create a cursor object to execute SQL queries
             c = conn.cursor()
@@ -153,21 +153,24 @@ class synopticDB(object):
             values = [site.attrs["STID"], site.attrs['longitude'], site.attrs['latitude'], site.attrs['ELEVATION'], site.attrs['STATE']]
             c.execute("INSERT OR IGNORE INTO Stations (STID, longitude, latitude, elevation, state) VALUES (?, ?, ?, ?, ?)", values)
             for observationCol in site.columns:
-                dbTableNames = self.get_table_names()
-                if not observationCol in dbTableNames:
-                    c.execute("CREATE TABLE {} ({} {}, {} {}, {} {}, {} {}, UNIQUE(STID, datetime))".format(observationCol, "STID", "TEXT", "datetime", "TEXT", 
+                if observationCol in self.available_vars:
+                    dbTableNames = self.get_table_names()
+                    if not observationCol in dbTableNames:
+                        c.execute("CREATE TABLE {} ({} {}, {} {}, {} {}, {} {}, UNIQUE(STID, datetime))".format(observationCol, "STID", "TEXT", "datetime", "TEXT", 
                                                                                                      "value", "REAL","units","TEXT"))
-                # Fill the corresponding column into the database 
-                # (e.g., air_temp column will go in the air_temp Table)
-                obsValue = site[observationCol]
-                stationID = [site.attrs["STID"]] * len(obsValue)
-                datetimeStr = site.index.strftime('%Y-%m-%d %H:%M:%S')
-                units = site.attrs["UNITS"][observationCol]
-                for idx, value in enumerate(obsValue):
-                    values = [stationID[idx], datetimeStr[idx], value, units]
-                    c.execute(f"INSERT OR IGNORE INTO {observationCol} (STID, datetime, value, units) VALUES (?, ?, ?, ?)", values)
-                # Commit changes to the database
-                conn.commit()
+                    # Fill the corresponding column into the database 
+                    # (e.g., air_temp column will go in the air_temp Table)
+                    obsValue = site[observationCol]
+                    stationID = [site.attrs["STID"]] * len(obsValue)
+                    datetimeStr = site.index.strftime('%Y-%m-%d %H:%M:%S')
+                    units = site.attrs["UNITS"][observationCol] 
+                    for idx, value in enumerate(obsValue):
+                        values = [stationID[idx], datetimeStr[idx], value, units]
+                        c.execute(f"INSERT OR IGNORE INTO {observationCol} (STID, datetime, value, units) VALUES (?, ?, ?, ?)", values)
+                    # Commit changes to the database
+                    conn.commit()
+                else:
+                    logging.warning('column not in variables {}'.format(observationCol))
         # close the database connection
         conn.close()
     
@@ -180,7 +183,11 @@ class synopticDB(object):
     # @ Param state - states the user wants data from
     # @ Param vars - list of variables to query (potential vars = 'air_temp','relative_humidity',"solar_radiation","precip_accum","fuel_moisture",'wind_speed')
     #
-    def get_synData(self,startTime=None,endTime=None,network=None,bbox=None,state=None,allVars=False,vars =['air_temp','relative_humidity']):
+    def get_synData(self,startTime=None,endTime=None,network=None,bbox=None,state=None,allVars=False,vars =['air_temp','relative_humidity'],deltaT=dt.timedelta(days=1)):
+        if vars is None:
+            vars = self.available_vars
+        else:
+            vars = [v for v in vars if v in self.available_vars]
         if allVars == False:
             operator = "OR"
         else:
@@ -190,15 +197,15 @@ class synopticDB(object):
         if startTime is None or endTime is None:
             endTime = dt.datetime.now().replace(minute=0, second=0, microsecond=0)
             startTime = endTime - timedelta(days=1)
-        tmpTime = startTime + dt.timedelta(days=1)
+        tmpTime = startTime + deltaT
         while tmpTime <= endTime:
             logging.info('getting data from synoptic between {} and {}'.format(startTime,tmpTime))
             startUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(startTime.year,startTime.month,startTime.day,startTime.hour,0)
             endUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(tmpTime.year,tmpTime.month,tmpTime.day,tmpTime.hour,0)
-            startTime = startTime + dt.timedelta(days=1)
-            tmpTime = tmpTime + dt.timedelta(days=1)
+            startTime = startTime + deltaT
+            tmpTime = tmpTime + deltaT
             try:
-                df = stations_timeseries(
+                df = ss.stations_timeseries(
                     start=startUtc, 
                     end=endUtc,
                     network=network,
@@ -296,27 +303,35 @@ class synopticDB(object):
         # Return the list of table names
         return tableNames
     
+    def get_available_vars(self):
+        return list(ss.variables(verbose=False).index)
+    
 
 if __name__ == '__main__':
-    
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
     # Any lines with double hashtags (##) indicate possible usages for the database if the hashtags are removed
-    dbName = "mesoDB"
-    synDb = synopticDB()
-    tempDf = synDb.get_synData(dt.datetime(2000,1,1,0),dt.datetime(2023,1,1,0),network=2,state=None,
-                               vars=['air_temp','relative_humidity',"solar_radiation","precip_accum","fuel_moisture",'wind_speed']) # Without bbox
+    synDb = synopticDB(osp.join(osp.abspath(os.getcwd()),"synDB.db"))
+    synDb.get_synData(dt.datetime(2023,1,1,0),dt.datetime(2023,7,1,0),network=2,state='CA',
+                               vars=[
+                                   "air_temp","relative_humidity","solar_radiation",
+                                   "precip_accum","fuel_moisture","wind_speed",
+                                   "wind_direction","PM_25_concentration"
+                               ],
+                               deltaT=timedelta(days=1))
 
     # Check the size of a table within the database
-    ##check_col_size(dbName, "Temperature")
+    synDb.check_col_size("air_temp")
 
     # Check station data
-    ##stations = check_stid("mesoDB")
+    stations = synDb.check_stid()
     
     # Check the contents of a given table in the database
-    ##tempData = check_table(dbName,"Precip")
+    tempData = synDb.check_table("precip_accum")
 
     # Query data from the database
-    ##tableNames = ["fuel_moisture","air_temp"]
-    ##tableSTID = ["ALDC1"]   
-    ##startDate = "2022-01-09 00:00"
-    ##endDate = "2022-01-10 00:00"
-    ##df = synDb.query_db(tableNames=tableNames, stationIDs=["AATC1"], state=["CA"], bbox=None, startDate=startDate, endDate=endDate)
+    tableNames = ["fuel_moisture","air_temp"]
+    stationIDs = ["AATC1"]   
+    startDate = "2023-01-01 00:00"
+    endDate = "2023-02-01 00:00"
+    df = synDb.query_db(tableNames=tableNames, stationIDs=stationIDs, startDate=startDate, endDate=endDate)
