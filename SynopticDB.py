@@ -208,7 +208,7 @@ class SynopticDB(object):
         maxLon = self.params.get('maxLongitude')
         bbox = [minLon,minLat,maxLon,maxLat]
         # If any of the coordinates given are None, set the bbox variable to None
-        if any(bbox) == None:
+        if any(value is None for value in bbox):
             bbox = None
         states = self.params.get('states')
         networks = self.params.get('networks')
@@ -421,14 +421,20 @@ class SynopticDB(object):
     # @ returns a dataframe of all the data from the requested table
     #
     def check_table(self,tableName):
-        # create a connection to the mesoDB database
-        with sqlite3.connect(self.dbPath) as conn:
-            # define the SQL query to select the variables from a given table
-            query = f"SELECT * FROM {tableName}"
-            # execute the query and store the results in a pandas dataframe
-            dfTable = pd.read_sql_query(query, conn)
-            dfTable = self.sort_dataframe(dfTable)
-            return dfTable
+        
+        tables = self.list_table_names()
+        if tableName in tables:
+            # create a connection to the mesoDB database
+            with sqlite3.connect(self.dbPath) as conn:
+                # define the SQL query to select the variables from a given table
+                query = f"SELECT * FROM {tableName}"
+                # execute the query and store the results in a pandas dataframe
+                dfTable = pd.read_sql_query(query, conn)
+                if tableName != 'Networks':
+                    dfTable = self.sort_dataframe(dfTable)
+                return dfTable
+        else:
+            SynopticError("The table provided is not in the database")
 
     # Sort the given dataframe by station ID and then by datetime
     #
