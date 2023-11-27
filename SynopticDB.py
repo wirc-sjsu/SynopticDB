@@ -111,7 +111,10 @@ class SynopticDB(object):
                     stationLon = station["LONGITUDE"]
                     elevation = station["ELEVATION"]
                     elevationUnits = station["UNITS"]['elevation']
-                    lastActive = dt.datetime.strptime(station["PERIOD_OF_RECORD"]['end'],"%Y-%m-%dT%H:%M:%SZ").strftime("%Y-%m-%d %H:%M:%S")
+                    if station["PERIOD_OF_RECORD"]['end'] == None:
+                        lastActive = None
+                    else:
+                        lastActive = dt.datetime.strptime(station["PERIOD_OF_RECORD"]['end'],"%Y-%m-%dT%H:%M:%SZ").strftime("%Y-%m-%d %H:%M:%S")
                     mnet = station["MNET_ID"]
                     values = [stationId,stationName,stationState,stationLat,stationLon,elevation,elevationUnits,lastActive,mnet]
                     c.execute(f"INSERT OR IGNORE INTO Stations (STID, NAME, STATE, LATITUDE, LONGITUDE, ELEVATION, ELEVATION_UNITS, LAST_ACTIVE, NETWORK_ID) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", values)
@@ -172,8 +175,8 @@ class SynopticDB(object):
                         # Check if the current table name is already in the database
                         if variable not in dbTableNames:
                             # If the variable name from the MesoWest file isn't in the database already
-                            c.execute("CREATE TABLE {} ({} {}, {} {}, {} {}, {} {}, UNIQUE(stid, datetime, value))".format(
-                                        variable, "stid", "TEXT", "datetime", "DATETIME", "value", thisType, "units","TEXT")) 
+                            c.execute("CREATE TABLE {} ({} {}, {} {}, {} {}, {} {}, UNIQUE(STID, DATETIME, VALUE))".format(
+                                        variable, "STID", "TEXT", "DATETIME", "DATETIME", "VALUE", thisType, "UNITS","TEXT")) 
                             # Commit changes to the database
                             conn.commit()
                             # Update the table names for the if/else statement on line 194
@@ -190,7 +193,7 @@ class SynopticDB(object):
                             dataUnit = None
                         values = [stationID,datetime,dataValue,dataUnit]
                         # Insert data into the database
-                        c.execute(f"INSERT OR IGNORE INTO {variable} (stid, datetime, value, units) VALUES (?, ?, ?, ?)", values)
+                        c.execute(f"INSERT OR IGNORE INTO {variable} (STID, DATETIME, VALUE, UNITS) VALUES (?, ?, ?, ?)", values)
                         # Commit changes to the database
                         conn.commit()
 
@@ -275,8 +278,8 @@ class SynopticDB(object):
         minLon = self.params.get("minLongitude")
         maxLon = self.params.get("maxLongitude")
         bbox = [minLon,minLat,maxLon,maxLat]
-        if any(bbox) == False:
-            bbox = None
+        if any(item is None for item in bbox):
+            bbox = [None]
         startDate = self.params.get("startDatetime").strftime("%Y-%m-%d %H:%M:%S")
         endDate = self.params.get("endDatetime").strftime("%Y-%m-%d %H:%M:%S")
         makeFile = self.params.get("makeFile")
@@ -307,16 +310,19 @@ class SynopticDB(object):
                     startDate = (currDate - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
                     endDate = currDate.strftime("%Y-%m-%d %H:%M:%S")
                 # Query data from the table and stids within startDate and endDate
-                query = f"SELECT stid, datetime, value, units FROM {table} WHERE stid IN ({','.join('?'*len(stids))}) AND datetime BETWEEN ? AND ?"
+                query = f"SELECT * FROM {table} WHERE STID IN ({','.join('?'*len(stids))}) AND DATETIME BETWEEN ? AND ?"
                 c.execute(query, stids + [startDate, endDate])
                 rows = c.fetchall()
                 if len(rows) > 0:
-                    df = pd.DataFrame(rows, columns=['stid', 'datetime', f'{table}_value', f'{table}_units'])
+                    df = pd.DataFrame(rows, columns=['STID', 'DATETIME', f'{(table).upper()}_VALUE', f'{(table).upper()}_UNITS'])
                     # Store the dataframe in the dictionary with the table name as the key
                     dfs[table] = df
         # Merge dataframes from different tables
         result = self.merge_dataframes(dfs)
-        result = self.sort_dataframe(result)
+        if result == None or result == "None":
+            raise SynopticError("No data was found in the database with the given parameters")
+        if len(result)>0:
+            result = self.sort_dataframe(result)
         # Get all station data for stations within the query
         stationDf = self.query_station_data_by_ids(availStids)
         # Create a data and station file if the makeFile parameter is True
@@ -343,23 +349,24 @@ class SynopticDB(object):
             queryParams = []
             # These if statements look to see if any of the user query parameters have been provided
             # Note: queryParams uses extend as the sqlite database expects a flat list of values
-            if stationIDs:
+            if not any(item is None for item in stationIDs):
                 conditions.append(f"STID IN ({','.join(['?']*len(stationIDs))})")
                 queryParams.extend(stationIDs)
-            if networks:
+            if not any(item is None for item in networks):
                 conditions.append("NETWORK_ID IN ({})".format(','.join(['?']*len(networks))))
                 queryParams.extend(networks)
-            if bbox:
+            if not any(item is None for item in bbox):
                 conditions.append("LATITUDE BETWEEN ? AND ? AND LONGITUDE BETWEEN ? AND ?")
                 queryParams.extend(bbox)
-            if states:
+            if not any(item is None for item in states):
                 conditions.append(f"STATE IN ({','.join(['?']*len(states))})")
                 queryParams.extend(states)
             # If any of the user query parameters were not None, add the query conditions to the sqlite call
-            if conditions:
+            if len(conditions) > 0:
                 query += ' WHERE ' + ' AND '.join(conditions)
             # Execute the query with the provided parameters
-            stids = c.execute(query, queryParams).fetchall()
+            stids = [result[0] for result in c.execute(query, queryParams).fetchall()]
+            #stids = c.execute(query, queryParams).fetchall()
             return stids
 
     # Merge all of the dataframes from the query function into a single dataframe
@@ -421,7 +428,6 @@ class SynopticDB(object):
     # @ returns a dataframe of all the data from the requested table
     #
     def check_table(self,tableName):
-        
         tables = self.list_table_names()
         if tableName in tables:
             # create a connection to the mesoDB database
@@ -430,7 +436,8 @@ class SynopticDB(object):
                 query = f"SELECT * FROM {tableName}"
                 # execute the query and store the results in a pandas dataframe
                 dfTable = pd.read_sql_query(query, conn)
-                if tableName != 'Networks':
+                invalidTables = ['Networks','Stations']
+                if tableName not in invalidTables:
                     dfTable = self.sort_dataframe(dfTable)
                 return dfTable
         else:
@@ -441,7 +448,7 @@ class SynopticDB(object):
     # @ returns a dataframe sorted by station ID and datetime
     #
     def sort_dataframe(self,df):
-        sortedDf = df.sort_values(by=["stid", "datetime"], ignore_index=True)
+        sortedDf = df.sort_values(by=["STID", "DATETIME"], ignore_index=True)
         return sortedDf
 
     # Remove a table from the database
