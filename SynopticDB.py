@@ -11,6 +11,7 @@ from synoptic.services import stations_timeseries
 import toml
 from utils import *
 import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class SynopticError(Exception):
     pass
@@ -219,7 +220,7 @@ class SynopticDB(object):
         tmpTime = startTime + relativedelta(hours=1)
         # Get the data from Synoptic 
         while tmpTime <= endTime:
-            logging.info('getting data from synoptic between {} and {}'.format(startTime,tmpTime))
+            logging.info('getting data between {} and {}'.format(startTime,tmpTime))
             startUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(startTime.year,startTime.month,startTime.day,startTime.hour,0)
             endUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(tmpTime.year,tmpTime.month,tmpTime.day,tmpTime.hour,0)
             # Iterate and get all of the data for all of the provided state values
