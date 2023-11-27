@@ -7,13 +7,9 @@ import os.path as osp
 import os
 import pandas as pd
 import sqlite3
-<<<<<<< HEAD
 from synoptic.services import stations_timeseries
 import toml
 from utils import *
-=======
-import synoptic.services as ss
->>>>>>> b962797cc6c142e1e7f45adfb20dc841df301aa0
 import logging
 
 class SynopticError(Exception):
@@ -26,7 +22,6 @@ class SynopticDB(object):
     #
     def __init__(self, folderPath=osp.join(osp.abspath(os.getcwd()),"synDB.db")):
         self.dbPath = osp.join(folderPath)
-<<<<<<< HEAD
         # Get the users token
         try:
             # Manually expand the tilde in the file path
@@ -42,13 +37,6 @@ class SynopticDB(object):
         self.init_params()
         # Open connection to sqlite database. Using "with" prevents database corruption
         with sqlite3.connect(self.dbPath) as conn:
-=======
-        self.available_vars = self.get_available_vars()
-        dbTableNames = self.get_table_names()
-        # Open connection to sqlite database
-        conn = sqlite3.connect(self.dbPath)
-        if not "Stations" in dbTableNames:
->>>>>>> b962797cc6c142e1e7f45adfb20dc841df301aa0
             # Create a cursor object to execute SQL queries
             c = conn.cursor()
             # Get a list of all of the avaialable tables in the database
@@ -139,7 +127,6 @@ class SynopticDB(object):
     #
     def insert_data(self, listOfDfs):
         # Open connection to sqlite database
-<<<<<<< HEAD
         with sqlite3.connect(self.dbPath) as conn:
             # Create a cursor object to execute SQL queries
             c = conn.cursor()
@@ -225,75 +212,16 @@ class SynopticDB(object):
         states = self.params.get('states')
         networks = self.params.get('networks')
         tableNames = self.params.get('vars')
-=======
-        conn = sqlite3.connect(self.dbPath,timeout=3600)
-        # Create a cursor object to execute SQL queries
-        c = conn.cursor()
-        # Get a list of all the current tables in the database
-        # Insert station data to Stations table and observation data to corresponding database tables
-        if not isinstance(observationDf, list):
-            observationDf = [observationDf]
-        for site in observationDf:
-            values = [site.attrs["STID"], site.attrs['longitude'], site.attrs['latitude'], site.attrs['ELEVATION'], site.attrs['STATE']]
-            c.execute("INSERT OR IGNORE INTO Stations (STID, longitude, latitude, elevation, state) VALUES (?, ?, ?, ?, ?)", values)
-            for observationCol in site.columns:
-                if observationCol in self.available_vars:
-                    dbTableNames = self.get_table_names()
-                    if not observationCol in dbTableNames:
-                        c.execute("CREATE TABLE {} ({} {}, {} {}, {} {}, {} {}, UNIQUE(STID, datetime))".format(observationCol, "STID", "TEXT", "datetime", "TEXT", 
-                                                                                                     "value", "REAL","units","TEXT"))
-                    # Fill the corresponding column into the database 
-                    # (e.g., air_temp column will go in the air_temp Table)
-                    obsValue = site[observationCol]
-                    stationID = [site.attrs["STID"]] * len(obsValue)
-                    datetimeStr = site.index.strftime('%Y-%m-%d %H:%M:%S')
-                    units = site.attrs["UNITS"][observationCol] 
-                    for idx, value in enumerate(obsValue):
-                        values = [stationID[idx], datetimeStr[idx], value, units]
-                        c.execute(f"INSERT OR IGNORE INTO {observationCol} (STID, datetime, value, units) VALUES (?, ?, ?, ?)", values)
-                    # Commit changes to the database
-                    conn.commit()
-                else:
-                    logging.warning('column not in variables {}'.format(observationCol))
-        # close the database connection
-        conn.close()
-    
-    
-    # Uses SynopticPy to get data from the Synoptic Weather Site and insert the data into the database
-    #
-    # @ Param startTime - datetime which the user wants the temporal range to start
-    # @ Param endTime - datetime which the user wants the temporal range to end
-    # @ Param bbox - bounding box from which the user can request a spatial range
-    # @ Param state - states the user wants data from
-    # @ Param vars - list of variables to query (potential vars = 'air_temp','relative_humidity',"solar_radiation","precip_accum","fuel_moisture",'wind_speed')
-    #
-    def get_synData(self,startTime=None,endTime=None,network=None,bbox=None,state=None,allVars=False,vars =['air_temp','relative_humidity'],deltaT=dt.timedelta(days=1)):
-        if vars is None:
-            vars = self.available_vars
-        else:
-            vars = [v for v in vars if v in self.available_vars]
-        if allVars == False:
-            operator = "OR"
-        else:
-            operator = "AND"
->>>>>>> b962797cc6c142e1e7f45adfb20dc841df301aa0
         # If either startTime or endTime are None values, grab the last day's data
         if startTime is None or endTime is None:
-<<<<<<< HEAD
             endTime = dt.datetime.utcnow()
             startTime = endTime - relativedelta(hours=1)
         tmpTime = startTime + relativedelta(hours=1)
         # Get the data from Synoptic 
-=======
-            endTime = dt.datetime.now().replace(minute=0, second=0, microsecond=0)
-            startTime = endTime - timedelta(days=1)
-        tmpTime = startTime + deltaT
->>>>>>> b962797cc6c142e1e7f45adfb20dc841df301aa0
         while tmpTime <= endTime:
             logging.info('getting data from synoptic between {} and {}'.format(startTime,tmpTime))
             startUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(startTime.year,startTime.month,startTime.day,startTime.hour,0)
             endUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(tmpTime.year,tmpTime.month,tmpTime.day,tmpTime.hour,0)
-<<<<<<< HEAD
             # Iterate and get all of the data for all of the provided state values
             try:
                 df = stations_timeseries(
@@ -315,27 +243,6 @@ class SynopticDB(object):
             # Increment the time by one hour
             startTime += relativedelta(hours=1)
             tmpTime += relativedelta(hours=1)
-=======
-            startTime = startTime + deltaT
-            tmpTime = tmpTime + deltaT
-            try:
-                df = ss.stations_timeseries(
-                    start=startUtc, 
-                    end=endUtc,
-                    network=network,
-                    varsoperator=operator,
-                    country="US",
-                    state=state,
-                    bbox=bbox,
-                    vars=vars,
-                    verbose=False
-                )
-            except Exception as e:
-                logging.warning('get_synData with exception {}'.format(e))
-                continue
-            # Insert the queired data to the dataabse
-            self.insert_data(df)
->>>>>>> b962797cc6c142e1e7f45adfb20dc841df301aa0
 
     # Get ALL of the data from the United States from ALL sources
     #
@@ -524,7 +431,6 @@ class SynopticDB(object):
 
     # Sort the given dataframe by station ID and then by datetime
     #
-<<<<<<< HEAD
     # @ returns a dataframe sorted by station ID and datetime
     #
     def sort_dataframe(self,df):
@@ -559,52 +465,3 @@ class SynopticDB(object):
         logging.info("Typical Requested Variables:")
         for var in listOfVars:
             logging.info(var) 
-=======
-    def get_table_names(self):
-        # Connect to the SQLite database
-        conn = sqlite3.connect(self.dbPath)
-        # Get a cursor object
-        c = conn.cursor()
-        # Query the SQLite master table for all table names
-        c.execute("SELECT name FROM sqlite_master WHERE type='table';")
-        # Fetch all the table names and store them in a list
-        tableNames = [row[0] for row in c.fetchall()]
-        # Close the cursor and connection
-        c.close()
-        conn.close()
-        # Return the list of table names
-        return tableNames
-    
-    def get_available_vars(self):
-        return list(ss.variables(verbose=False).index)
-    
-
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-    # Any lines with double hashtags (##) indicate possible usages for the database if the hashtags are removed
-    synDb = synopticDB(osp.join(osp.abspath(os.getcwd()),"synDB.db"))
-    synDb.get_synData(dt.datetime(2023,1,1,0),dt.datetime(2023,7,1,0),network=2,state='CA',
-                               vars=[
-                                   "air_temp","relative_humidity","solar_radiation",
-                                   "precip_accum","fuel_moisture","wind_speed",
-                                   "wind_direction","PM_25_concentration"
-                               ],
-                               deltaT=timedelta(days=1))
-
-    # Check the size of a table within the database
-    synDb.check_col_size("air_temp")
-
-    # Check station data
-    stations = synDb.check_stid()
-    
-    # Check the contents of a given table in the database
-    tempData = synDb.check_table("precip_accum")
-
-    # Query data from the database
-    tableNames = ["fuel_moisture","air_temp"]
-    stationIDs = ["AATC1"]   
-    startDate = "2023-01-01 00:00"
-    endDate = "2023-02-01 00:00"
-    df = synDb.query_db(tableNames=tableNames, stationIDs=stationIDs, startDate=startDate, endDate=endDate)
->>>>>>> b962797cc6c142e1e7f45adfb20dc841df301aa0
