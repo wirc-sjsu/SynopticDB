@@ -319,7 +319,7 @@ class SynopticDB(object):
                     dfs[table] = df
         # Merge dataframes from different tables
         result = self.merge_dataframes(dfs)
-        if result == None or result == "None":
+        if not isinstance(result, pd.DataFrame):
             raise SynopticError("No data was found in the database with the given parameters")
         if len(result)>0:
             result = self.sort_dataframe(result)
