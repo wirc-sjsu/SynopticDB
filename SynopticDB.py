@@ -149,6 +149,8 @@ class SynopticDB(object):
                     logging.debug(f'SynopticDB --- Inserting: {count} / {len(listOfDfs)}')
                 # List of all of the columns from the dataframe
                 dfVariableNames = siteDf.keys()
+                # Convert the datetime to datetime format
+                siteDf.index = pd.to_datetime(siteDf.index)
                 for idx, row in siteDf.iterrows():
                     # Loop through all of the column names in the row
                     for variable in dfVariableNames:
@@ -216,7 +218,7 @@ class SynopticDB(object):
         tmpTime = startTime + relativedelta(hours=1)
         # Get the data from Synoptic 
         while tmpTime <= endTime:
-            logging.info('getting data between {} and {}'.format(startTime,tmpTime))
+            logging.info('Getting data between {} and {}'.format(startTime,tmpTime))
             startUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(startTime.year,startTime.month,startTime.day,startTime.hour,0)
             endUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(tmpTime.year,tmpTime.month,tmpTime.day,tmpTime.hour,0)
             # Iterate and get all of the data for all of the provided state values
@@ -234,6 +236,8 @@ class SynopticDB(object):
                     )
                 # Insert the queried data to the dataabse
                 self.insert_data(df)
+                logging.debug('Finished adding data to database')
+                logging.debug(' ')
             except Exception as e:
                 logging.warning('get_synData with exception: {}'.format(e))
                 break
