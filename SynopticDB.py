@@ -11,7 +11,7 @@ from synoptic.services import stations_timeseries
 import toml
 from utils import *
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class SynopticError(Exception):
     pass
@@ -79,6 +79,7 @@ class SynopticDB(object):
             # Create a cursor object to execute SQL queries
             c = conn.cursor()
             networkDict = get_networks(self.token)
+            logging.info(f"Adding {len(networkDict['MNET'])} networks to database")
             # Iterate through your data and insert it into the table
             for network in networkDict['MNET']:
                 try:
@@ -102,6 +103,7 @@ class SynopticDB(object):
             # Create a cursor object to execute SQL queries
             c = conn.cursor()
             stationDict = get_stations(self.token)
+            logging.info(f"Adding {len(stationDict['STATION'])} stations to database")
             for station in stationDict["STATION"]:
                 try:
                     stationId = station["STID"]
@@ -130,6 +132,7 @@ class SynopticDB(object):
     # @ Param listOfDfs- list of dataframes with data from Synoptic
     #
     def insert_data(self, listOfDfs):
+        logging.debug('SynopticDB --- Adding data to the repo')
         # Open connection to sqlite database
         with sqlite3.connect(self.dbPath) as conn:
             # Create a cursor object to execute SQL queries
@@ -137,15 +140,16 @@ class SynopticDB(object):
             # Put the listOfDfs into a list if it isn't already in a list
             if not isinstance(listOfDfs, list):
                 listOfDfs = [listOfDfs]
+            logging.debug(f'SynopticDB --- Number of inserts: {len(listOfDfs)}')
+            # Get a list of all of the avaialbe tables in the database
+            dbTableNames = self.list_table_names()
             # Each site in the listOfDfs is one station's data
-            for siteDf in listOfDfs:
+            for count, siteDf in enumerate(listOfDfs):
+                if count % 1000 == 0:
+                    logging.debug(f'SynopticDB --- Inserting: {count} / {len(listOfDfs)}')
                 # List of all of the columns from the dataframe
                 dfVariableNames = siteDf.keys()
-                # Create a list that will hold all of the tables' names which were updated
-                finalTableNames = []
                 for idx, row in siteDf.iterrows():
-                    # Get a list of all of the avaialbe tables in the database
-                    dbTableNames = self.list_table_names()
                     # Loop through all of the column names in the row
                     for variable in dfVariableNames:
                         # Unsure of how to handle these variables
@@ -166,36 +170,25 @@ class SynopticDB(object):
                                 if row[variable].lower() in ("nan", "n/a", "na", "none", "nonetype"):
                                     continue
                         # Used to correctly label the value in the database (either string or numeric value)
-                        try:
-                            thisValue = float(currValue)
-                            thisType = "REAL"
-                        except:
-                            thisType = "TEXT"
-                            thisValue = str(currValue)
+                        thisType = "REAL" if isinstance(currValue, (int, float)) else "TEXT"
+                        thisValue = float(currValue) if thisType == "REAL" else str(currValue)
                         # Check if the current table name is already in the database
                         if variable not in dbTableNames:
                             # If the variable name from the MesoWest file isn't in the database already
                             c.execute("CREATE TABLE {} ({} {}, {} {}, {} {}, {} {}, UNIQUE(STID, DATETIME, VALUE))".format(
                                         variable, "STID", "TEXT", "DATETIME", "DATETIME", "VALUE", thisType, "UNITS","TEXT")) 
-                            # Commit changes to the database
-                            conn.commit()
-                            # Update the table names for the if/else statement on line 194
-                            dbTableNames = self.list_table_names()
-                        # Add the updated table name to the list which will be used to sort the data in the database
-                        finalTableNames.append(variable)
+                            # Add the variable name to the current table names in the database
+                            dbTableNames.append(variable)
                         # Prepare the data to be inserted into the database
                         stationID = siteDf.attrs['STID']
                         datetime = row.name.strftime('%Y-%m-%d %H:%M:%S')
                         dataValue = thisValue
-                        try:
-                            dataUnit = siteDf.attrs['UNITS'][variable]
-                        except:
-                            dataUnit = None
+                        dataUnit = siteDf.attrs['UNITS'].get(variable, None)
                         values = [stationID,datetime,dataValue,dataUnit]
                         # Insert data into the database
                         c.execute(f"INSERT OR IGNORE INTO {variable} (STID, DATETIME, VALUE, UNITS) VALUES (?, ?, ?, ?)", values)
-                        # Commit changes to the database
-                        conn.commit()
+                # Commit changes to the database
+                conn.commit()
 
     # Uses SynopticPy to get data from the Synoptic Weather Site and insert the data into the database
     #
@@ -303,7 +296,7 @@ class SynopticDB(object):
                 # Get the station ids in the database that the user requests
                 stids = self.find_stids_from_params(stationIDs,networks,bbox,state)
                 # This variable will be used later to generate a csv of all of the station information requested
-                availStids = stids
+                availStids += stids
                 # Check if either startDate or endDate are None values, grab the last day's data
                 if startDate is None or endDate is None:
                     currDate = dt.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
