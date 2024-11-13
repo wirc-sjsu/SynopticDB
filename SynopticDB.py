@@ -7,9 +7,8 @@ import os.path as osp
 import os
 import pandas as pd
 import sqlite3
-from synoptic.services import stations_timeseries
 import toml
-from utils import *
+from .utils import ensure_list, get_networks, get_stations, get_timeseries
 import logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -21,7 +20,7 @@ class SynopticDB(object):
     #
     # @ Param folderPath - path where this script is located
     #
-    def __init__(self, folderPath=osp.join(osp.abspath(os.getcwd()),"synDB.db")):
+    def __init__(self, folderPath=osp.join(osp.abspath(os.getcwd()), "synDB.db")):
         self.dbPath = osp.join(folderPath)
         # Get the users token
         try:
@@ -42,6 +41,19 @@ class SynopticDB(object):
             c = conn.cursor()
             # Get a list of all of the avaialable tables in the database
             dbTableNames = self.list_table_names()
+            # Create a Metadata table
+            if not "Metadata" in dbTableNames:
+                # Create the Metadata table with key and value structure
+                c.execute('''CREATE TABLE Metadata 
+                       (key TEXT PRIMARY KEY, value TEXT)''') 
+                # Commit changes to the database
+                conn.commit()
+                # Add creation date to Metadata
+                c.execute("INSERT OR IGNORE INTO Metadata (key, value) VALUES (?, ?)", 
+                        ("creation_date_utc", dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%d_%H:%M:%S')))
+                # Commit changes to the database
+                conn.commit()
+                logging.info("Created a Metadata table")
             # Add the Stations table if it is not in the database
             if not "Stations" in dbTableNames:
                 # Create the Stations table with eight columns: STID, NAME, LATITUDE, LONGITUDE, ELEVATION, ELEVATION_UNITS, STATE, LAST_ACTIVE, & NETWORK_ID
@@ -113,12 +125,16 @@ class SynopticDB(object):
                     stationLon = station["LONGITUDE"]
                     elevation = station["ELEVATION"]
                     elevationUnits = station["UNITS"]['elevation']
-                    if station["PERIOD_OF_RECORD"]['end'] == None:
-                        lastActive = None
-                    else:
-                        lastActive = dt.datetime.strptime(station["PERIOD_OF_RECORD"]['end'],"%Y-%m-%dT%H:%M:%SZ").strftime("%Y-%m-%d %H:%M:%S")
+                    lastActive = station["PERIOD_OF_RECORD"].get('end')
+                    if lastActive != None:
+                        lastActive = dt.datetime.strptime(
+                            lastActive, "%Y-%m-%dT%H:%M:%SZ"
+                        ).strftime("%Y-%m-%d %H:%M:%S")
                     mnet = station["MNET_ID"]
-                    values = [stationId,stationName,stationState,stationLat,stationLon,elevation,elevationUnits,lastActive,mnet]
+                    values = [
+                        stationId, stationName, stationState, stationLat, stationLon, 
+                        elevation, elevationUnits, lastActive, mnet
+                    ]
                     c.execute(f"INSERT OR IGNORE INTO Stations (STID, NAME, STATE, LATITUDE, LONGITUDE, ELEVATION, ELEVATION_UNITS, LAST_ACTIVE, NETWORK_ID) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", values)
                     # Commit changes to the database
                     conn.commit()
@@ -132,7 +148,7 @@ class SynopticDB(object):
     # @ Param listOfDfs- list of dataframes with data from Synoptic
     #
     def insert_data(self, listOfDfs):
-        logging.debug('SynopticDB --- Adding data to the repo')
+        logging.debug('SynopticDB.insert_data - Adding data to the repo')
         # Open connection to sqlite database
         with sqlite3.connect(self.dbPath) as conn:
             # Create a cursor object to execute SQL queries
@@ -140,20 +156,20 @@ class SynopticDB(object):
             # Put the listOfDfs into a list if it isn't already in a list
             if not isinstance(listOfDfs, list):
                 listOfDfs = [listOfDfs]
-            logging.debug(f'SynopticDB --- Number of inserts: {len(listOfDfs)}')
+            logging.debug(f'SynopticDB.insert_data - Number of inserts: {len(listOfDfs)}')
             # Get a list of all of the avaialbe tables in the database
             dbTableNames = self.list_table_names()
             # Each site in the listOfDfs is one station's data
             for count, siteDf in enumerate(listOfDfs):
                 if count % 1000 == 0:
-                    logging.debug(f'SynopticDB --- Inserting: {count} / {len(listOfDfs)}')
+                    logging.debug(f'SynopticDB.insert_data - Inserting: {count} / {len(listOfDfs)}')
                 # List of all of the columns from the dataframe
                 dfVariableNames = siteDf.keys()
                 # Convert the datetime to datetime format
                 siteDf.index = pd.to_datetime(siteDf.index)
                 for idx, row in siteDf.iterrows():
                     # Loop through all of the column names in the row
-                    for variable in dfVariableNames:
+                    for variable in  dfVariableNames:
                         # Unsure of how to handle these variables
                         bannedVars = ['cloud_layer_1','weather_summary']
                         if variable in bannedVars:
@@ -168,7 +184,7 @@ class SynopticDB(object):
                             if np.isnan(float(currValue)):
                                 continue
                         except:
-                            if isinstance(currValue,str):
+                            if isinstance(currValue, str):
                                 if row[variable].lower() in ("nan", "n/a", "na", "none", "nonetype"):
                                     continue
                         # Used to correctly label the value in the database (either string or numeric value)
@@ -185,8 +201,8 @@ class SynopticDB(object):
                         stationID = siteDf.attrs['STID']
                         datetime = row.name.strftime('%Y-%m-%d %H:%M:%S')
                         dataValue = thisValue
-                        dataUnit = siteDf.attrs['UNITS'].get(variable, None)
-                        values = [stationID,datetime,dataValue,dataUnit]
+                        dataUnit = siteDf.attrs['UNITS'].get(variable)
+                        values = [stationID, datetime, dataValue, dataUnit]
                         # Insert data into the database
                         c.execute(f"INSERT OR IGNORE INTO {variable} (STID, DATETIME, VALUE, UNITS) VALUES (?, ?, ?, ?)", values)
                 # Commit changes to the database
@@ -194,53 +210,29 @@ class SynopticDB(object):
 
     # Uses SynopticPy to get data from the Synoptic Weather Site and insert the data into the database
     #
-    def get_synData(self):
+    def get_synData(self, max_retries=5):
         # Get all of the database parameters
         startTime = self.params.get('startDatetime')
         endTime = self.params.get('endDatetime')
-        stids = self.params.get('stationIDs')
-        states = self.params.get('states')
-        minLat = self.params.get('minLatitude')
-        maxLat = self.params.get('maxLatitude')
-        minLon = self.params.get('minLongitude')
-        maxLon = self.params.get('maxLongitude')
-        bbox = [minLon,minLat,maxLon,maxLat]
-        # If any of the coordinates given are None, set the bbox variable to None
-        if any(value is None for value in bbox):
-            bbox = None
-        states = self.params.get('states')
-        networks = self.params.get('networks')
-        tableNames = self.params.get('vars')
         # If either startTime or endTime are None values, grab the last day's data
         if startTime is None or endTime is None:
-            endTime = dt.datetime.utcnow()
+            endTime = dt.datetime.now(dt.timezone.utc)
             startTime = endTime - relativedelta(hours=1)
         tmpTime = startTime + relativedelta(hours=1)
         # Get the data from Synoptic 
         while tmpTime <= endTime:
             logging.info('Getting data between {} and {}'.format(startTime,tmpTime))
-            startUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(startTime.year,startTime.month,startTime.day,startTime.hour,0)
-            endUtc = "{:04d}{:02d}{:02d}{:02d}{:02d}".format(tmpTime.year,tmpTime.month,tmpTime.day,tmpTime.hour,0)
+            startUtc = startTime.strftime('%Y%m%d%H00')
+            endUtc = tmpTime.strftime('%Y%m%d%H00')
             # Iterate and get all of the data for all of the provided state values
             try:
-                df = stations_timeseries(
-                    start=startUtc, 
-                    end=endUtc,
-                    network=networks,
-                    stid = stids,
-                    country="US",
-                    state=states,
-                    bbox=bbox,
-                    vars=tableNames,
-                    verbose=False
-                    )
-                # Insert the queried data to the dataabse
-                self.insert_data(df)
+                get_timeseries(self, startUtc, endUtc, max_retries)
                 logging.debug('Finished adding data to database')
                 logging.debug(' ')
             except Exception as e:
                 logging.warning('get_synData with exception: {}'.format(e))
-                break
+            # Update metadata
+            self.update_metadata(tmpTime)
             # Increment the time by one hour
             startTime += relativedelta(hours=1)
             tmpTime += relativedelta(hours=1)
@@ -249,7 +241,7 @@ class SynopticDB(object):
     #
     def get_all_synoptic_data(self):
         # Get all the station IDs in the database
-        allSTIDs = self.find_stids_from_params(None,None,None,None)
+        allSTIDs = self.find_stids_from_params(None, None, None, None)
         numOfStids = len(allSTIDs["STID"])
         i = 0
         # Run get_synData for all of the available stations in the database
@@ -266,20 +258,18 @@ class SynopticDB(object):
     #
     def query_db(self):
         # Query parameters. Also ensures the values are in list format if they are needed in said format
-        tableNames = self.params.get("vars") if isinstance(self.params.get("vars"), list) else [self.params.get("vars")]
-        stationIDs = self.params.get("stationIDs") if isinstance(self.params.get("stationIDs"), list) else [self.params.get("stationIDs")]
-        networks = self.params.get("networks") if isinstance(self.params.get("networks"), list) else [self.params.get("networks")]
-        state = self.params.get("states") if isinstance(self.params.get("states"), list) else [self.params.get("states")]
+        tableNames = ensure_list(self.params.get("vars"))
+        stationIDs = self.params.get("stationIDs")
+        networks = self.params.get("networks")
+        state = self.params.get("states")
         minLat = self.params.get("minLatitude")
         maxLat = self.params.get("maxLatitude")
         minLon = self.params.get("minLongitude")
         maxLon = self.params.get("maxLongitude")
-        bbox = [minLon,minLat,maxLon,maxLat]
-        if any(item is None for item in bbox):
-            bbox = [None]
         startDate = self.params.get("startDatetime").strftime("%Y-%m-%d %H:%M:%S")
         endDate = self.params.get("endDatetime").strftime("%Y-%m-%d %H:%M:%S")
         makeFile = self.params.get("makeFile")
+        bbox = [minLat, maxLat, minLon, maxLon]
         with sqlite3.connect(self.dbPath) as conn:
             # Create a cursor object to execute SQL queries
             c = conn.cursor()
@@ -298,12 +288,12 @@ class SynopticDB(object):
                     logging.warning(f"Table '{table}' does not exist in the database.")
                     continue
                 # Get the station ids in the database that the user requests
-                stids = self.find_stids_from_params(stationIDs,networks,bbox,state)
+                stids = self.find_stids_from_params(stationIDs, networks, bbox, state)
                 # This variable will be used later to generate a csv of all of the station information requested
                 availStids += stids
                 # Check if either startDate or endDate are None values, grab the last day's data
                 if startDate is None or endDate is None:
-                    currDate = dt.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+                    currDate = dt.datetime.now(dt.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
                     startDate = (currDate - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
                     endDate = currDate.strftime("%Y-%m-%d %H:%M:%S")
                 # Query data from the table and stids within startDate and endDate
@@ -317,14 +307,15 @@ class SynopticDB(object):
         # Merge dataframes from different tables
         result = self.merge_dataframes(dfs)
         if not isinstance(result, pd.DataFrame):
-            raise SynopticError("No data was found in the database with the given parameters")
+            logging.warning("No data was found in the database with the given parameters")
+            return None, None
         if len(result)>0:
             result = self.sort_dataframe(result)
         # Get all station data for stations within the query
         stationDf = self.query_station_data_by_ids(availStids)
         # Create a data and station file if the makeFile parameter is True
         if makeFile:
-            now = dt.datetime.utcnow().strftime("%Y-%m-%d_%H:%M:%S")
+            now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d_%H:%M:%S")
             result.to_csv(f"SYN_{now}.csv")
             stationDf.to_csv(f"SYN_stations_{now}.csv",index=False)
         return result, stationDf
@@ -337,6 +328,10 @@ class SynopticDB(object):
     # @param states - a list of states (abbreviations)
     #
     def find_stids_from_params(self, stationIDs, networks, bbox, states):
+        stationIDs = ensure_list(stationIDs)
+        networks = ensure_list(networks)
+        bbox = ensure_list(bbox)
+        states = ensure_list(states)
         # Open connection to SQLite database
         with sqlite3.connect(self.dbPath) as conn:
             c = conn.cursor()
@@ -346,16 +341,17 @@ class SynopticDB(object):
             queryParams = []
             # These if statements look to see if any of the user query parameters have been provided
             # Note: queryParams uses extend as the sqlite database expects a flat list of values
-            if not any(item is None for item in stationIDs):
+            if len(stationIDs):
                 conditions.append(f"STID IN ({','.join(['?']*len(stationIDs))})")
                 queryParams.extend(stationIDs)
-            if not any(item is None for item in networks):
+            if len(networks):
                 conditions.append("NETWORK_ID IN ({})".format(','.join(['?']*len(networks))))
                 queryParams.extend(networks)
-            if not any(item is None for item in bbox):
+            if len(bbox):
+                bbox = np.array(bbox).astype(np.float64)
                 conditions.append("LATITUDE BETWEEN ? AND ? AND LONGITUDE BETWEEN ? AND ?")
                 queryParams.extend(bbox)
-            if not any(item is None for item in states):
+            if len(states):
                 conditions.append(f"STATE IN ({','.join(['?']*len(states))})")
                 queryParams.extend(states)
             # If any of the user query parameters were not None, add the query conditions to the sqlite call
@@ -424,16 +420,21 @@ class SynopticDB(object):
     #
     # @ returns a dataframe of all the data from the requested table
     #
-    def check_table(self,tableName):
+    def check_table(self, tableName):
         tables = self.list_table_names()
         if tableName in tables:
             # create a connection to the mesoDB database
             with sqlite3.connect(self.dbPath) as conn:
+                if tableName == 'Metadata':
+                    c = conn.cursor()
+                    c.execute("SELECT key, value FROM metadata")
+                    rows = c.fetchall()
+                    return rows
                 # define the SQL query to select the variables from a given table
                 query = f"SELECT * FROM {tableName}"
                 # execute the query and store the results in a pandas dataframe
                 dfTable = pd.read_sql_query(query, conn)
-                invalidTables = ['Networks','Stations']
+                invalidTables = ['Networks', 'Stations']
                 if tableName not in invalidTables:
                     dfTable = self.sort_dataframe(dfTable)
                 return dfTable
@@ -468,6 +469,28 @@ class SynopticDB(object):
                 c.execute(f'DROP TABLE IF EXISTS {tableName}')
                 # Commit the changes to the database
                 conn.commit()
+    
+    # Update metadata for last modified
+    #
+    def update_metadata(self, utcTime):
+        logging.info(f'Updating metadata {utcTime}')
+        metadata = dict(self.check_table('Metadata'))
+        with sqlite3.connect(self.dbPath) as conn:
+             # Create a cursor object to interact with the database
+             c = conn.cursor()
+             # Update the last updated
+             c.execute("INSERT OR REPLACE INTO Metadata (key, value) VALUES (?, ?)",
+                 ("last_updated_utc", dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%d_%H:%M:%S')))
+             # Update the last data time
+             last_get_data_utc = metadata.get('last_get_data_utc')
+             if last_get_data_utc is not None:
+                 last_get_data_utc = dt.datetime.strptime(last_get_data_utc, '%Y-%m-%d_%H:%M:%S')
+                 last_get_data_utc = max(last_get_data_utc, utcTime.replace(tzinfo=None))
+             last_get_data_utc = utcTime.strftime('%Y-%m-%d_%H:%M:%S')    
+             c.execute("INSERT OR REPLACE INTO Metadata (key, value) VALUES (?, ?)",
+                 ("last_get_data_utc", last_get_data_utc))
+             # Commit the changes to the database
+             conn.commit()
 
     # List the typical variables found in MesoWest stations that can be used in the database query function
     #
@@ -476,3 +499,4 @@ class SynopticDB(object):
         logging.info("Typical Requested Variables:")
         for var in listOfVars:
             logging.info(var) 
+
