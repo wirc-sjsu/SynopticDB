@@ -222,8 +222,8 @@ class SynopticDB(object):
         # Get the data from Synoptic 
         while tmpTime <= endTime:
             logging.info('Getting data between {} and {}'.format(startTime,tmpTime))
-            startUtc = startTime.strftime('%Y%m%d%H00')
-            endUtc = tmpTime.strftime('%Y%m%d%H00')
+            startUtc = startTime.strftime('%Y%m%d%H%M')
+            endUtc = tmpTime.strftime('%Y%m%d%H%M')
             # Iterate and get all of the data for all of the provided state values
             try:
                 get_timeseries(self, startUtc, endUtc, max_retries)
